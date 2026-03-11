@@ -25,8 +25,8 @@ JUDGE_MODEL = "qwen3.5-flash"
 custom_http_client = httpx.Client(
     http2=True,
     limits=httpx.Limits(max_connections=5000, max_keepalive_connections=2000),
-    timeout=75.0,
-    trust_env=False,
+    timeout=100.0,
+    trust_env=True,
 )
 
 try:
