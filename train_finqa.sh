@@ -30,7 +30,6 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
 
     python3 -m projects.finqa.train_finqa \
         algorithm.adv_estimator=grpo \
-        data.shuffle=False \
         data.train_batch_size=256 \
         data.val_batch_size=256 \
         data.max_prompt_length=2048 \
@@ -43,7 +42,6 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         actor_rollout_ref.actor.ppo_mini_batch_size=32 \
         actor_rollout_ref.actor.use_dynamic_bsz=True \
         actor_rollout_ref.actor.ppo_max_token_len_per_gpu=30000 \
-        actor_rollout_ref.actor.shuffle=False \
         actor_rollout_ref.actor.use_kl_loss=False \
         actor_rollout_ref.actor.clip_ratio_high=0.28 \
         actor_rollout_ref.actor.kl_loss_coef=0.001 \

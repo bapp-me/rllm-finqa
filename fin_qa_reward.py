@@ -5,7 +5,6 @@ import re
 
 import httpx
 import openai
-from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from rllm.rewards.reward_types import RewardOutput
 
@@ -20,16 +19,9 @@ with open(CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
 with open(MULTI_TABLE_CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
     MULTI_TABLE_CORRECTNESS_PROMPT = f.read()
 
-PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-JUDGE_MODEL = "gpt-5-nano"
-MULTI_TABLE_JUDGE_MODEL = "gpt-5-mini"
-
-# (Cache + Retry)
-GATEWAY_CONFIG = {
-    "retry": {"attempts": 5},
-    "cache": {"mode": "simple", "max_age": 1209600},  # Exact match, cache TTL 14 days
-}
+JUDGE_API_BASE_URL = os.environ.get("FINQA_REWARD_API_BASE_URL")
+JUDGE_API_KEY = os.environ.get("FINQA_REWARD_API_KEY") or os.environ.get("WQ_API_KEY")
+JUDGE_MODEL = os.environ.get("FINQA_REWARD_MODEL")
 
 custom_http_client = httpx.Client(
     http2=True,
@@ -39,12 +31,17 @@ custom_http_client = httpx.Client(
 )
 
 try:
-    JUDGE_CLIENT = openai.OpenAI(
-        base_url=PORTKEY_GATEWAY_URL,
-        api_key=OPENAI_API_KEY,
-        http_client=custom_http_client,
-        default_headers=createHeaders(api_key=PORTKEY_API_KEY, provider="openai", config=GATEWAY_CONFIG),
-    )
+    if not JUDGE_API_KEY:
+        raise ValueError("Missing FINQA_REWARD_API_KEY (or WQ_API_KEY)")
+
+    client_kwargs = {
+        "api_key": JUDGE_API_KEY,
+        "http_client": custom_http_client,
+    }
+    if JUDGE_API_BASE_URL:
+        client_kwargs["base_url"] = JUDGE_API_BASE_URL
+
+    JUDGE_CLIENT = openai.OpenAI(**client_kwargs)
 
 except Exception as e:
     print(f"Warning: Failed to initialize global OpenAI client: {e}")
@@ -53,6 +50,7 @@ except Exception as e:
 _FINAL_ANSWER_CODE_BLOCK_RE = re.compile(r"```\s*FINAL ANSWER:\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 _FINAL_ANSWER_PARAGRAPH_RE = re.compile(r"FINAL ANSWER:\s*(.*?)(?=\n\s*\n)", re.DOTALL | re.IGNORECASE)
 _FINAL_ANSWER_TAIL_RE = re.compile(r"FINAL ANSWER:\s*(.*)$", re.DOTALL | re.IGNORECASE)
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 # Weight configuration for multi-table scoring
 CORRECTNESS_WEIGHTS = {
@@ -69,64 +67,61 @@ def _call_judge(
     system_prompt: str,
     user_prompt: str,
     is_multi_table: bool = False,
-) -> tuple[bool | float, dict]:
-    if JUDGE_CLIENT is None:
-        return (False if not is_multi_table else 0.0), {}
+) -> tuple[bool | float, dict, dict]:
+    judge_stats = {
+        "judge_request_ok": 0.0,
+        "judge_client_unavailable": 0.0,
+        "judge_timeout_error": 0.0,
+        "judge_api_error": 0.0,
+        "judge_parse_error": 0.0,
+    }
 
-    model = MULTI_TABLE_JUDGE_MODEL if is_multi_table else JUDGE_MODEL
+    if JUDGE_CLIENT is None:
+        judge_stats["judge_client_unavailable"] = 1.0
+        print("[finqa_reward] Judge client unavailable; fallback reward path used.")
+        return (False if not is_multi_table else 0.0), {}, judge_stats
+
+    if not JUDGE_MODEL:
+        judge_stats["judge_client_unavailable"] = 1.0
+        print("[finqa_reward] FINQA_REWARD_MODEL is not set; fallback reward path used.")
+        return (False if not is_multi_table else 0.0), {}, judge_stats
+
+    if is_multi_table:
+        user_prompt = (
+            f"{user_prompt}\n\n"
+            "Important: Return valid JSON only and include all required scoring fields."
+        )
+
     request_kwargs = {
-        "model": model,
-        "instructions": system_prompt,
-        "input": user_prompt,
-        "max_output_tokens": 5000 if is_multi_table else 512,
+        "model": JUDGE_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.0,
     }
 
     if is_multi_table:
-        # Structured Output Schema
-        schema = {
-            "type": "object",
-            "properties": {
-                "primary_data_score": {"type": "number"},
-                "derived_metrics_score": {"type": "number"},
-                "completeness_score": {"type": "number"},
-                "structure_score": {"type": "number"},
-                "reasoning_score": {"type": "number"},
-                "consistency_score": {"type": "number"},
-                "explanation": {"type": "string"},
-            },
-            "required": [
-                "primary_data_score",
-                "derived_metrics_score",
-                "completeness_score",
-                "structure_score",
-                "reasoning_score",
-                "consistency_score",
-                "explanation",
-            ],
-            "additionalProperties": False,
-        }
-        request_kwargs["reasoning"] = {"effort": "medium"}
-        request_kwargs["text"] = {
-            "format": {
-                "type": "json_schema",
-                "name": "finqa_multi_table_rubric",
-                "schema": schema,
-                "strict": True,
-            }
-        }
+        request_kwargs["max_tokens"] = 5000
     else:
-        request_kwargs["reasoning"] = {"effort": "low"}
-        request_kwargs["text"] = {"verbosity": "low"}
+        request_kwargs["max_tokens"] = 512
 
     try:
-        response = JUDGE_CLIENT.responses.create(**request_kwargs)
-        judge_output = getattr(response, "output_text", "")
+        response = JUDGE_CLIENT.chat.completions.create(**request_kwargs)
+        message = response.choices[0].message if response and response.choices else None
+        judge_output = message.content if message and message.content else ""
 
         if is_multi_table:
+            parsed = {}
             try:
                 parsed = json.loads(judge_output)
             except json.JSONDecodeError:
-                parsed = {}
+                json_match = _JSON_OBJECT_RE.search(judge_output)
+                if json_match:
+                    try:
+                        parsed = json.loads(json_match.group(0))
+                    except json.JSONDecodeError:
+                        parsed = {}
 
             weighted_score = 0.0
             total_weight = 0.0
@@ -146,10 +141,23 @@ def _call_judge(
             parsed = {}
             result = decision
 
-        return result, parsed
+        judge_stats["judge_request_ok"] = 1.0
 
-    except Exception:
-        return (False if not is_multi_table else 0.0), {}
+        if is_multi_table and not parsed:
+            judge_stats["judge_parse_error"] = 1.0
+            print("[finqa_reward] Multi-table judge returned invalid JSON; reward fallback to 0 if no valid rubric fields.")
+
+        return result, parsed, judge_stats
+
+    except Exception as e:
+        if isinstance(e, (openai.APITimeoutError, httpx.TimeoutException)):
+            judge_stats["judge_timeout_error"] = 1.0
+            print(f"[finqa_reward] Judge timeout: {type(e).__name__}: {e}")
+        else:
+            judge_stats["judge_api_error"] = 1.0
+            print(f"[finqa_reward] Judge API/error: {type(e).__name__}: {e}")
+
+        return (False if not is_multi_table else 0.0), {}, judge_stats
 
 
 def _check_right_table_accessed(accessed_tables: list[str], expected_table_names: str | list[str]) -> float:
@@ -229,7 +237,7 @@ def fin_qa_reward_function(task_info: dict, action: str) -> RewardOutput:
         correctness_input = f"question : {question}\nmodel response : {final_answer}\nlabel : {ground_truth}"
         system_prompt = CORRECTNESS_PROMPT
 
-    result, rubric = _call_judge(
+    result, rubric, judge_stats = _call_judge(
         system_prompt,
         correctness_input,
         is_multi_table=is_multi_table,
@@ -249,7 +257,20 @@ def fin_qa_reward_function(task_info: dict, action: str) -> RewardOutput:
 
     # Build metadata
     metadata = {
+        "correctness_reward": correctness_reward,
         "right_table_access_reward": right_table_access_reward,
+        "judge_request_ok": judge_stats["judge_request_ok"],
+        "judge_client_unavailable": judge_stats["judge_client_unavailable"],
+        "judge_timeout_error": judge_stats["judge_timeout_error"],
+        "judge_api_error": judge_stats["judge_api_error"],
+        "judge_parse_error": judge_stats["judge_parse_error"],
+        # If judge request failed or parse failed, this flag helps dashboard filters.
+        "judge_fallback_error": 1.0
+        if any(
+            judge_stats[k] > 0
+            for k in ("judge_client_unavailable", "judge_timeout_error", "judge_api_error", "judge_parse_error")
+        )
+        else 0.0,
     }
 
     if is_multi_table:

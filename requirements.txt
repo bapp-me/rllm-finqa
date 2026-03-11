@@ -1,6 +1,6 @@
 # Core (needed for training/inference)
 asteval>=1.0.6
-portkey-ai>=0.1
+openai>=1.0
 httpx[http2]>=0.24
 
 # Data generation (only for scripts/data_generation/)

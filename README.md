@@ -5,7 +5,7 @@ This directory contains scripts for training and running FinQA, a financial ques
 Our examples use the following:
 * [Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) as the base model
 * [rLLM/finqa](https://huggingface.co/datasets/rLLM/finqa) dataset (5,110 Q&A pairs across 207 companies)
-* gpt-5-nano reward judge with Portkey gateway for caching
+* a single OpenAI-compatible reward judge API for both single-table and multi-table evaluation
 
 [Model Weights](https://huggingface.co/rLLM/rLLM-FinQA-4B) | [Dataset](https://huggingface.co/datasets/rLLM/finqa) | [Blog Post](https://rllm-project.com/post.html?post=finqa.md)
 
@@ -64,8 +64,9 @@ Set the required environment variables before training:
 
 | Variable | Description |
 |---|---|
-| `OPENAI_API_KEY` | OpenAI API key for the reward judge |
-| `PORTKEY_API_KEY` | Portkey gateway key for reward judge caching |
+| `FINQA_REWARD_API_KEY` | API key for the reward judge |
+| `FINQA_REWARD_API_BASE_URL` | OpenAI-compatible base URL for the reward judge API |
+| `FINQA_REWARD_MODEL` | Judge model ID used for both single-table and multi-table reward |
 
 ```bash
 # verl backend (Qwen3-4B-Instruct-2507)
