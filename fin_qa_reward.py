@@ -1,6 +1,5 @@
 # Standard imports
 import json
-import os
 import re
 
 import httpx
@@ -19,9 +18,9 @@ with open(CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
 with open(MULTI_TABLE_CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
     MULTI_TABLE_CORRECTNESS_PROMPT = f.read()
 
-JUDGE_API_BASE_URL = os.environ.get("FINQA_REWARD_API_BASE_URL")
-JUDGE_API_KEY = os.environ.get("FINQA_REWARD_API_KEY") or os.environ.get("WQ_API_KEY")
-JUDGE_MODEL = os.environ.get("FINQA_REWARD_MODEL")
+JUDGE_API_BASE_URL = "http://wanqing.internal/api/gateway/v1/endpoints"
+JUDGE_API_KEY = "tz4agdd2uk6epo206pndnqn806r6kk14cnxv"
+JUDGE_MODEL = "ep-0r1acp-1772624691150387732"
 
 custom_http_client = httpx.Client(
     http2=True,
