@@ -38,6 +38,46 @@ def _load_csv(path: str) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _question_type_series(df: pd.DataFrame) -> pd.Series:
+    return df.get("question_type", pd.Series([""] * len(df))).fillna("").astype(str).str.lower()
+
+
+def _build_curriculum_split(single_df: pd.DataFrame, multi_df: pd.DataFrame) -> pd.DataFrame:
+    """Construct curriculum order: single-table -> multi-table medium -> multi-table hard."""
+    single = single_df.copy()
+    single["curriculum_stage"] = "single_table"
+    single["data_source"] = "single_table"
+
+    if multi_df.empty:
+        return single.reset_index(drop=True)
+
+    multi = multi_df.copy()
+    qtype = _question_type_series(multi)
+
+    # Keep only 3 curriculum phases. Rare easy samples are grouped into medium.
+    medium_mask = qtype.isin(["multi_table_medium", "multi_table_easy"])
+    hard_mask = qtype.eq("multi_table_hard")
+
+    medium = multi[medium_mask].copy()
+    medium["curriculum_stage"] = "multi_table_medium"
+    medium["data_source"] = "multi_table"
+
+    hard = multi[hard_mask].copy()
+    hard["curriculum_stage"] = "multi_table_hard"
+    hard["data_source"] = "multi_table"
+
+    # Keep unexpected labels at the end rather than dropping them silently.
+    other = multi[~(medium_mask | hard_mask)].copy()
+    if not other.empty:
+        other["curriculum_stage"] = "multi_table_other"
+        other["data_source"] = "multi_table"
+
+    ordered = [single, medium, hard]
+    if not other.empty:
+        ordered.append(other)
+    return pd.concat(ordered, axis=0, ignore_index=True)
+
+
 def _parse_json_list(value):
     """Decode columns stored as JSON strings, defaulting to [] for empty values."""
     if isinstance(value, list):
@@ -60,18 +100,35 @@ def _parse_json_list(value):
 
 
 def prepare_finqa_data():
-    train_df = _load_csv(C.TRAIN_QUESTIONS_PATH)
-    val_df = _load_csv(C.VAL_QUESTIONS_PATH)
-    test_df = _load_csv(C.TEST_QUESTIONS_PATH)
+    single_train_df = _load_csv(C.TRAIN_QUESTIONS_PATH)
+    single_val_df = _load_csv(C.VAL_QUESTIONS_PATH)
+    single_test_df = _load_csv(C.TEST_QUESTIONS_PATH)
+
+    multi_train_df = _load_csv(C.MULTI_TABLE_TRAIN_PATH) if C.MULTI_TABLE_TRAIN_PATH.exists() else pd.DataFrame()
+    multi_val_df = _load_csv(C.MULTI_TABLE_VAL_PATH) if C.MULTI_TABLE_VAL_PATH.exists() else pd.DataFrame()
+    multi_test_df = _load_csv(C.MULTI_TABLE_TEST_PATH) if C.MULTI_TABLE_TEST_PATH.exists() else pd.DataFrame()
+
+    train_df = _build_curriculum_split(single_train_df, multi_train_df)
+    val_df = _build_curriculum_split(single_val_df, multi_val_df)
+    test_df = _build_curriculum_split(single_test_df, multi_test_df)
+
+    print(
+        "Curriculum split sizes (single -> medium -> hard): "
+        f"train={len(train_df)}, val={len(val_df)}, test={len(test_df)}"
+    )
 
     def preprocess_fn(example):
+        source = example.get("data_source") if hasattr(example, "get") else None
+        source = source if isinstance(source, str) and source else "single_table"
+        raw_id = str(example["id"])
         return {
             "question": example["user_query"],
             "ground_truth": example["answer"],
-            "data_source": "finqa",
+            "data_source": source,
             "company": example["company"],
-            "question_id": str(example["id"]),
+            "question_id": f"{source}_{raw_id}",
             "question_type": example["question_type"],
+            "curriculum_stage": example.get("curriculum_stage", "single_table"),
             "core_question": example["question"],
             "table_name": _parse_json_list(example.get("table_name")),
             "columns_used": _parse_json_list(example.get("columns_used_json")),
