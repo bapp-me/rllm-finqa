@@ -18,9 +18,9 @@ with open(CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
 with open(MULTI_TABLE_CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
     MULTI_TABLE_CORRECTNESS_PROMPT = f.read()
 
-JUDGE_API_BASE_URL = "http://wanqing.internal/api/gateway/v1/endpoints"
-JUDGE_API_KEY = "tz4agdd2uk6epo206pndnqn806r6kk14cnxv"
-JUDGE_MODEL = "ep-0r1acp-1772624691150387732"
+JUDGE_API_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+JUDGE_API_KEY = "sk-74e1f54ede49465bab11411f56c1722d"
+JUDGE_MODEL = "qwen3.5-flash"
 
 custom_http_client = httpx.Client(
     http2=True,
@@ -97,7 +97,7 @@ def _call_judge(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.0,
+        "extra_body": {"enable_thinking": True},
     }
 
     if is_multi_table:
