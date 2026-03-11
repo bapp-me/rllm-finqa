@@ -1,4 +1,5 @@
 import hydra
+from collections import Counter
 
 from rllm.agents.agent import Episode
 from rllm.data.dataset import DatasetRegistry
@@ -93,6 +94,84 @@ class FinQAWorkflow(MultiTurnWorkflow):
             episode.metrics.update(metadata)
 
 
+def _iter_dataset_examples(dataset):
+    """Yield (index, sample) pairs from a dataset-like object."""
+    try:
+        total = len(dataset)
+    except Exception:
+        total = None
+
+    if isinstance(total, int):
+        for i in range(total):
+            try:
+                yield i, dataset[i]
+            except Exception:
+                break
+        return
+
+    for i, sample in enumerate(dataset):
+        yield i, sample
+
+
+def _inspect_curriculum_order(dataset, split_name: str, preview_count: int = 20) -> None:
+    """Print curriculum ordering diagnostics before training starts."""
+    stage_rank = {
+        "single_table": 0,
+        "multi_table_medium": 1,
+        "multi_table_hard": 2,
+        "multi_table_other": 3,
+    }
+
+    stage_counts = Counter()
+    first_indices = {}
+    preview = []
+    disorder_indices = []
+    prev_rank = -1
+    total_seen = 0
+
+    for idx, sample in _iter_dataset_examples(dataset):
+        if not isinstance(sample, dict):
+            continue
+
+        stage = str(sample.get("curriculum_stage") or "single_table")
+        stage_counts[stage] += 1
+        total_seen += 1
+
+        if stage not in first_indices:
+            first_indices[stage] = idx
+
+        if len(preview) < preview_count:
+            preview.append(
+                {
+                    "idx": idx,
+                    "stage": stage,
+                    "qtype": str(sample.get("question_type") or ""),
+                    "qid": str(sample.get("question_id") or ""),
+                }
+            )
+
+        rank = stage_rank.get(stage, stage_rank["multi_table_other"])
+        if rank < prev_rank:
+            disorder_indices.append(idx)
+            if len(disorder_indices) >= 10:
+                break
+        prev_rank = rank
+
+    print(f"[{split_name}] Curriculum check: total={total_seen}, stage_counts={dict(stage_counts)}")
+    print(f"[{split_name}] First stage indices: {first_indices}")
+    print(f"[{split_name}] Preview first {len(preview)} samples:")
+    for item in preview:
+        print(
+            f"[{split_name}] idx={item['idx']} stage={item['stage']} "
+            f"qtype={item['qtype']} qid={item['qid']}"
+        )
+
+    if disorder_indices:
+        print(f"[{split_name}] WARNING: detected stage order violations at indices {disorder_indices}")
+    else:
+        print(f"[{split_name}] Curriculum order looks monotonic (single -> medium -> hard).")
+
+
 @hydra.main(
     config_path="pkg://rllm.trainer.config",
     config_name="agent_ppo_trainer",
@@ -101,6 +180,9 @@ class FinQAWorkflow(MultiTurnWorkflow):
 def main(config):
     train_dataset = DatasetRegistry.load_dataset("finqa", "train")
     val_dataset = DatasetRegistry.load_dataset("finqa", "val")
+
+    _inspect_curriculum_order(train_dataset, "train")
+    _inspect_curriculum_order(val_dataset, "val")
 
     config.rllm.workflow.use_workflow = True
 
