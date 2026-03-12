@@ -7,7 +7,7 @@ export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
-TOTAL_EPOCHS=${TOTAL_EPOCHS:-8}
+TOTAL_EPOCHS=${TOTAL_EPOCHS:-6}
 TRAIN_TOTAL=${TRAIN_TOTAL:-4000}
 VAL_TOTAL=${VAL_TOTAL:-256}
 MAX_MULTI_TRAIN=${MAX_MULTI_TRAIN:-400}
@@ -58,7 +58,7 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
         actor_rollout_ref.rollout.n=8 \
         actor_rollout_ref.rollout.enable_prefix_caching=True \
-        actor_rollout_ref.rollout.val_kwargs.n=8 \
+        actor_rollout_ref.rollout.val_kwargs.n=1 \
         actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
         actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
         actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=81920 \
@@ -73,7 +73,7 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         trainer.critic_warmup=0 \
         trainer.logger=['console','swanlab'] \
         trainer.project_name='finqa-grpo-curriculum' \
-        trainer.experiment_name='finqa-grpo-test' \
+        trainer.experiment_name='finqa-grpo-test2' \
         trainer.val_before_train=True \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=1 \

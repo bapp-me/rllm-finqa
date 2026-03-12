@@ -4,6 +4,7 @@ import re
 
 import httpx
 import openai
+import os
 
 from rllm.rewards.reward_types import RewardOutput
 
@@ -19,7 +20,7 @@ with open(MULTI_TABLE_CORRECTNESS_PROMPT_PATH, encoding="utf-8") as f:
     MULTI_TABLE_CORRECTNESS_PROMPT = f.read()
 
 JUDGE_API_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-JUDGE_API_KEY = "sk-74e1f54ede49465bab11411f56c1722d"
+JUDGE_API_KEY = os.getenv("api_key")
 JUDGE_MODEL = "qwen3.5-flash"
 
 custom_http_client = httpx.Client(
@@ -217,6 +218,7 @@ def fin_qa_reward_function(task_info: dict, action: str) -> RewardOutput:
     core_question = task_info.get("core_question") or question
     ground_truth = task_info.get("ground_truth")
     question_type = (task_info.get("question_type") or "").lower()
+    curriculum_stage = str(task_info.get("curriculum_stage") or "single_table").lower()
 
     if not action or not question or not ground_truth:
         return RewardOutput(
@@ -258,6 +260,10 @@ def fin_qa_reward_function(task_info: dict, action: str) -> RewardOutput:
     metadata = {
         "correctness_reward": correctness_reward,
         "right_table_access_reward": right_table_access_reward,
+        "is_single_table_sample": 0.0 if is_multi_table else 1.0,
+        "is_multi_table_sample": 1.0 if is_multi_table else 0.0,
+        "is_multi_table_medium_sample": 1.0 if curriculum_stage == "multi_table_medium" else 0.0,
+        "is_multi_table_hard_sample": 1.0 if curriculum_stage == "multi_table_hard" else 0.0,
         "judge_request_ok": judge_stats["judge_request_ok"],
         "judge_client_unavailable": judge_stats["judge_client_unavailable"],
         "judge_timeout_error": judge_stats["judge_timeout_error"],

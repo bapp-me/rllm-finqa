@@ -93,6 +93,27 @@ class FinQAWorkflow(MultiTurnWorkflow):
             metadata = episode.trajectories[0].steps[-1].info.get("metadata", {})
             episode.metrics.update(metadata)
 
+            reward_value = float(metadata.get("correctness_reward", 0.0))
+            is_correct_value = 1.0 if bool(episode.is_correct) else 0.0
+
+            # Sparse grouped metrics: keys are only emitted for matching samples,
+            # so logger aggregation computes per-group means directly.
+            if float(metadata.get("is_single_table_sample", 0.0)) >= 0.5:
+                episode.metrics["reward_single_table"] = reward_value
+                episode.metrics["pass_single_table"] = is_correct_value
+
+            if float(metadata.get("is_multi_table_sample", 0.0)) >= 0.5:
+                episode.metrics["reward_multi_table"] = reward_value
+                episode.metrics["pass_multi_table"] = is_correct_value
+
+            if float(metadata.get("is_multi_table_medium_sample", 0.0)) >= 0.5:
+                episode.metrics["reward_multi_table_medium"] = reward_value
+                episode.metrics["pass_multi_table_medium"] = is_correct_value
+
+            if float(metadata.get("is_multi_table_hard_sample", 0.0)) >= 0.5:
+                episode.metrics["reward_multi_table_hard"] = reward_value
+                episode.metrics["pass_multi_table_hard"] = is_correct_value
+
 
 def _iter_dataset_examples(dataset):
     """Yield (index, sample) pairs from a dataset-like object."""
