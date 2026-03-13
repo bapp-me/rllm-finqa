@@ -129,9 +129,9 @@ def _call_judge(
         judge_output = ""
         if response and response.output:
             for block in response.output:
-                if hasattr(block, "content"):
+                if hasattr(block, "content") and block.content:
                     for item in block.content:
-                        if hasattr(item, "text"):
+                        if hasattr(item, "text") and item.text:
                             judge_output += item.text
 
         if is_multi_table:
