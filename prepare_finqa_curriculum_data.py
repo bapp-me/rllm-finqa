@@ -38,14 +38,15 @@ def _safe_sample(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
     return df.sample(n=n, replace=replace, random_state=seed).reset_index(drop=True)
 
 
-def _linear_multi_count(epoch: int, total_epochs: int, max_multi: int) -> int:
+def _linear_hard_count(epoch: int, total_epochs: int, max_hard: int) -> int:
+    """Linearly ramp hard multi-table samples from 0 to max_hard over the second half of epochs."""
     half = total_epochs // 2
     if epoch <= half:
         return 0
 
     second_half_steps = total_epochs - half
     step_in_second_half = epoch - half
-    return int(round(max_multi * (step_in_second_half / second_half_steps)))
+    return int(round(max_hard * (step_in_second_half / second_half_steps)))
 
 
 def _build_epoch_train(
@@ -53,58 +54,55 @@ def _build_epoch_train(
     multi_train: pd.DataFrame,
     epoch: int,
     total_epochs: int,
-    train_total: int,
-    max_multi: int,
+    max_hard: int,
     seed: int,
 ) -> pd.DataFrame:
-    multi_n = _linear_multi_count(epoch, total_epochs, max_multi)
-    multi_n = min(max_multi, max(0, multi_n))
-    single_n = train_total - multi_n
+    half = total_epochs // 2
 
-    single_part = _safe_sample(single_train, single_n, seed + epoch * 101)
+    # Single table: always use full data
+    single_part = single_train.copy()
     single_part["curriculum_stage"] = "single_table"
     single_part["data_source"] = "single_table"
 
-    multi_part = _safe_sample(multi_train, multi_n, seed + epoch * 103)
-    if not multi_part.empty:
-        qtype = multi_part["question_type"].fillna("").astype(str).str.lower()
-        multi_part["curriculum_stage"] = qtype.where(
-            qtype.isin(["multi_table_medium", "multi_table_hard"]),
-            other="multi_table_other",
-        )
-        multi_part["data_source"] = "multi_table"
+    if epoch <= half:
+        # First half: single table only
+        return single_part.reset_index(drop=True)
 
-    return pd.concat([single_part, multi_part], axis=0, ignore_index=True)
+    # Second half: add multi-table data
+    qtype = multi_train["question_type"].fillna("").astype(str).str.lower()
+
+    # Medium: always use full
+    medium_pool = multi_train[qtype == "multi_table_medium"].copy()
+    medium_pool["curriculum_stage"] = "multi_table_medium"
+    medium_pool["data_source"] = "multi_table"
+
+    # Hard: linearly ramp up to max_hard
+    hard_pool = multi_train[qtype == "multi_table_hard"]
+    hard_n = _linear_hard_count(epoch, total_epochs, max_hard)
+    hard_n = min(len(hard_pool), max(0, hard_n))
+    hard_part = _safe_sample(hard_pool, hard_n, seed + epoch * 103)
+    hard_part["curriculum_stage"] = "multi_table_hard"
+    hard_part["data_source"] = "multi_table"
+
+    return pd.concat([single_part, medium_pool, hard_part], axis=0, ignore_index=True)
 
 
 def _build_epoch_val(
     single_val: pd.DataFrame,
     multi_val: pd.DataFrame,
-    epoch: int,
-    total_epochs: int,
-    seed: int,
 ) -> pd.DataFrame:
-    half = total_epochs // 2
-
-    if epoch <= half:
-        val_single = _safe_sample(single_val, 256, seed + epoch * 107)
-        val_single["curriculum_stage"] = "single_table"
-        val_single["data_source"] = "single_table"
-        return val_single
-
-    qtype = multi_val["question_type"].fillna("").astype(str).str.lower()
-    medium_pool = multi_val[qtype == "multi_table_medium"]
-    hard_pool = multi_val[qtype == "multi_table_hard"]
-
-    single_part = _safe_sample(single_val, 200, seed + epoch * 109)
+    """Always use full val data (single + multi)."""
+    single_part = single_val.copy()
     single_part["curriculum_stage"] = "single_table"
     single_part["data_source"] = "single_table"
 
-    medium_part = _safe_sample(medium_pool, 25, seed + epoch * 113)
+    qtype = multi_val["question_type"].fillna("").astype(str).str.lower()
+
+    medium_part = multi_val[qtype == "multi_table_medium"].copy()
     medium_part["curriculum_stage"] = "multi_table_medium"
     medium_part["data_source"] = "multi_table"
 
-    hard_part = _safe_sample(hard_pool, 31, seed + epoch * 127)
+    hard_part = multi_val[qtype == "multi_table_hard"].copy()
     hard_part["curriculum_stage"] = "multi_table_hard"
     hard_part["data_source"] = "multi_table"
 
@@ -139,14 +137,9 @@ def _preprocess_rows(df: pd.DataFrame):
 def prepare_epoch_curriculum_data(
     epoch: int,
     total_epochs: int,
-    train_total: int = 4000,
-    val_total: int = 256,
-    max_multi_train: int = 400,
+    max_hard_train: int = 400,
     seed: int = 42,
 ):
-    if val_total != 256:
-        raise ValueError("This curriculum implementation expects val_total=256.")
-
     single_train = _load_csv(C.TRAIN_QUESTIONS_PATH)
     single_val = _load_csv(C.VAL_QUESTIONS_PATH)
     multi_train = _load_csv(C.MULTI_TABLE_TRAIN_PATH)
@@ -158,16 +151,12 @@ def prepare_epoch_curriculum_data(
         multi_train=multi_train,
         epoch=epoch,
         total_epochs=total_epochs,
-        train_total=train_total,
-        max_multi=max_multi_train,
+        max_hard=max_hard_train,
         seed=seed,
     )
     val_df = _build_epoch_val(
         single_val=single_val,
         multi_val=multi_val,
-        epoch=epoch,
-        total_epochs=total_epochs,
-        seed=seed,
     )
 
     test_df = test_df.copy()
@@ -198,9 +187,7 @@ def main():
     parser = argparse.ArgumentParser(description="Prepare epoch-specific FinQA curriculum data")
     parser.add_argument("--epoch", type=int, required=True)
     parser.add_argument("--total-epochs", type=int, required=True)
-    parser.add_argument("--train-total", type=int, default=4000)
-    parser.add_argument("--val-total", type=int, default=256)
-    parser.add_argument("--max-multi-train", type=int, default=400)
+    parser.add_argument("--max-hard-train", type=int, default=400)
     parser.add_argument("--seed", type=int, default=42)
 
     args = parser.parse_args()
@@ -210,9 +197,7 @@ def main():
     prepare_epoch_curriculum_data(
         epoch=args.epoch,
         total_epochs=args.total_epochs,
-        train_total=args.train_total,
-        val_total=args.val_total,
-        max_multi_train=args.max_multi_train,
+        max_hard_train=args.max_hard_train,
         seed=args.seed,
     )
 

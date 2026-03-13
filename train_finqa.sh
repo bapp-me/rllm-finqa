@@ -8,9 +8,7 @@ export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-6}
-TRAIN_TOTAL=${TRAIN_TOTAL:-4000}
-VAL_TOTAL=${VAL_TOTAL:-256}
-MAX_MULTI_TRAIN=${MAX_MULTI_TRAIN:-400}
+MAX_HARD_TRAIN=${MAX_HARD_TRAIN:-400}
 SEED=${SEED:-42}
 
 for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
@@ -23,16 +21,14 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
     python3 -m projects.finqa.prepare_finqa_curriculum_data \
         --epoch "$EPOCH" \
         --total-epochs "$TOTAL_EPOCHS" \
-        --train-total "$TRAIN_TOTAL" \
-        --val-total "$VAL_TOTAL" \
-        --max-multi-train "$MAX_MULTI_TRAIN" \
+        --max-hard-train "$MAX_HARD_TRAIN" \
         --seed "$SEED"
 
     python3 -m projects.finqa.train_finqa \
         algorithm.adv_estimator=grpo \
         data.train_batch_size=384 \
-        data.val_batch_size=256 \
-        data.max_prompt_length=2048 \
+        data.val_batch_size=648 \
+        data.max_prompt_length=3072 \
         data.max_response_length=16384 \
         actor_rollout_ref.model.path=/home/qinhengyi/rllm/projects/finqa/qwen \
         actor_rollout_ref.hybrid_engine=True \
@@ -77,8 +73,8 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         trainer.val_before_train=False \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=1 \
-        trainer.save_freq=1 \
-        trainer.test_freq=1 \
+        trainer.save_freq=10 \
+        trainer.test_freq=10 \
         trainer.default_hdfs_dir=null \
         trainer.resume_mode=$RESUME_MODE \
         rllm.agent.max_steps=20 \
