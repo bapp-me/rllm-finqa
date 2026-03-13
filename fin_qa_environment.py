@@ -5,7 +5,7 @@ import json
 from rllm.environments.tools.tool_env import ToolEnvironment
 
 # Local imports
-from .fin_qa_reward import fin_qa_reward_function
+from .fin_qa_reward_doubao import fin_qa_reward_function
 from .fin_qa_tools import Calculator, GetTableInfo, GetTableNames, SQLQuery
 
 
