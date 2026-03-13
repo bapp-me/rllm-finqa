@@ -98,7 +98,7 @@ def _call_judge(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "extra_body": {"enable_thinking": True},
+        "extra_body": {"enable_thinking": is_multi_table},
     }
 
     if is_multi_table:

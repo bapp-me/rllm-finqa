@@ -74,7 +74,7 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         trainer.logger=['console','swanlab'] \
         trainer.project_name='finqa-grpo-curriculum' \
         trainer.experiment_name='finqa-grpo-test2' \
-        trainer.val_before_train=True \
+        trainer.val_before_train=False \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=1 \
         trainer.save_freq=1 \
