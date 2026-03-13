@@ -128,7 +128,7 @@ def _call_judge(
             for key, weight in CORRECTNESS_WEIGHTS.items():
                 score = parsed.get(key)
                 if isinstance(score, int | float):
-                    normalized = float(score) / 100.0
+                    normalized = float(score) / 5.0
                     weighted_score += normalized * weight
                     total_weight += weight
 
