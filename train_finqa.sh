@@ -1,5 +1,6 @@
 set -x
 
+export PYTHONUNBUFFERED=1
 unset ROCR_VISIBLE_DEVICES
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
