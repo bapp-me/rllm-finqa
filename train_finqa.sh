@@ -11,6 +11,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 TOTAL_EPOCHS=${TOTAL_EPOCHS:-6}
 MAX_HARD_TRAIN=${MAX_HARD_TRAIN:-400}
 SEED=${SEED:-42}
+CKPT_DIR=${CKPT_DIR:-/home/qinhengyi/rllm/checkpoints/finqa-grpo-curriculum/finqa-grpo-exp}
 
 for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
     if [ "$EPOCH" -eq 1 ]; then
@@ -75,9 +76,11 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=1 \
         trainer.save_freq=10 \
-        trainer.test_freq=10 \
+        trainer.test_freq=11 \
         trainer.default_hdfs_dir=null \
+        trainer.default_local_dir=$CKPT_DIR \
         trainer.resume_mode=$RESUME_MODE \
+        trainer.total_training_steps=11 \
         rllm.agent.max_steps=20 \
         rllm.stepwise_advantage.enable=False \
         rllm.workflow.n_parallel_tasks=2048 \
