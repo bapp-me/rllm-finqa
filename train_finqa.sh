@@ -71,7 +71,7 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         trainer.critic_warmup=0 \
         trainer.logger=['console','swanlab'] \
         trainer.project_name='finqa-grpo-curriculum' \
-        trainer.experiment_name='finqa-grpo-exp1' \
+        trainer.experiment_name='finqa-grpo-exp2' \
         trainer.val_before_train=False \
         trainer.n_gpus_per_node=8 \
         trainer.nnodes=1 \
@@ -83,6 +83,6 @@ for EPOCH in $(seq 1 "$TOTAL_EPOCHS"); do
         trainer.total_training_steps=11 \
         rllm.agent.max_steps=20 \
         rllm.stepwise_advantage.enable=False \
-        rllm.workflow.n_parallel_tasks=2048 \
+        rllm.workflow.n_parallel_tasks=2304 \
         trainer.total_epochs=1
 done
