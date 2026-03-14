@@ -1,21 +1,30 @@
 """
 In-training curriculum learning sampler for FinQA.
 
-Uses Bayesian learnability estimation with UCB exploration to dynamically
-adjust sampling weights across difficulty levels (data_source) during training.
+Dynamically adjusts sampling weights across difficulty levels (data_source)
+based on reward improvement velocity and saturation detection.
 
-Adapted from DUMP project's curriculum learning approach for use with
-verl's AbstractCurriculumSampler interface.
+Key design choices for FinQA's heterogeneous reward distributions:
+- single_table: discrete {0, 1} reward → uses raw success rate
+- multi_table: continuous [0, 1] reward → binarized with threshold for success rate
+
+Exploitation signal: reward improvement velocity (Δ success_rate per step),
+NOT |advantage| mean — avoids cross-source incomparability due to different
+reward distributions.
+
+Saturation detection: when a source's success rate exceeds a high-water mark
+(e.g. 0.85), its weight is dampened to redirect training resources to sources
+with more room for improvement.
 
 Usage in train_finqa.sh:
-    data.sampler.class_path=projects.finqa.finqa_curriculum_sampler
+    data.sampler.class_path=pkg://projects.finqa.finqa_curriculum_sampler
     data.sampler.class_name=FinQACurriculumSampler
     data.dataloader_num_workers=0
 """
 
 import logging
 import random
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -27,7 +36,6 @@ from verl import DataProto
 try:
     from verl.experimental.dataset.sampler import AbstractCurriculumSampler
 except ImportError:
-    # Fallback: define a minimal base so the file still imports
     class AbstractCurriculumSampler(Sampler):
         def update(self, batch: "DataProto") -> None: ...
 
@@ -35,79 +43,153 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Learnability estimator (per data_source)
+# Per-source tracker
 # ---------------------------------------------------------------------------
 
 @dataclass
-class LearnabilityEstimator:
-    """Track success rate and advantage magnitude for one data source."""
-    alpha: float = 1.0          # Beta distribution (successes)
-    beta_param: float = 1.0     # Beta distribution (failures)
-    mu: float = 0.0             # Running mean of |advantages|
+class SourceTracker:
+    """Track success rate trajectory for one data source."""
+    # For success rate: binarized reward
+    success_threshold: float = 1.0  # single_table: >=1.0; multi_table: will be overridden
     n_samples: int = 0
-    window_size: int = 128
-    recent_rewards: list[float] = field(default_factory=list)
-    recent_advantages: list[float] = field(default_factory=list)
 
-    def update(self, rewards: np.ndarray, advantages: np.ndarray) -> None:
+    # Sliding window of binarized outcomes (1=success, 0=failure)
+    window_size: int = 128
+    recent_outcomes: deque = field(default_factory=lambda: deque(maxlen=128))
+
+    # Track success rate history for velocity computation (one entry per update call)
+    rate_history: list[float] = field(default_factory=list)
+    max_history: int = 20  # keep last N rate snapshots
+
+    def update(self, rewards: np.ndarray) -> None:
         if len(rewards) == 0:
             return
-        self.recent_rewards.extend(rewards.tolist())
-        self.recent_advantages.extend(advantages.tolist())
-        if len(self.recent_rewards) > self.window_size:
-            self.recent_rewards = self.recent_rewards[-self.window_size:]
-        if len(self.recent_advantages) > self.window_size:
-            self.recent_advantages = self.recent_advantages[-self.window_size:]
-
-        successes = int(np.sum(rewards >= 1))
-        failures = len(rewards) - successes
-        self.alpha += successes
-        self.beta_param += failures
-        self.mu = float(np.mean(np.abs(self.recent_advantages)))
+        outcomes = (rewards >= self.success_threshold).astype(float)
+        for o in outcomes:
+            self.recent_outcomes.append(o)
         self.n_samples += len(rewards)
+
+        # Snapshot current rate
+        rate = self.success_rate
+        self.rate_history.append(rate)
+        if len(self.rate_history) > self.max_history:
+            self.rate_history = self.rate_history[-self.max_history:]
+
+    @property
+    def success_rate(self) -> float:
+        if not self.recent_outcomes:
+            return 0.0
+        return sum(self.recent_outcomes) / len(self.recent_outcomes)
+
+    @property
+    def improvement_velocity(self) -> float:
+        """Reward improvement speed: positive = getting better, zero/negative = saturated."""
+        if len(self.rate_history) < 2:
+            return 0.0
+        # Compare recent half vs earlier half
+        mid = len(self.rate_history) // 2
+        if mid == 0:
+            return 0.0
+        early = np.mean(self.rate_history[:mid])
+        recent = np.mean(self.rate_history[mid:])
+        return float(recent - early)
 
 
 # ---------------------------------------------------------------------------
-# Curriculum controller (manages all sources)
+# Curriculum controller
 # ---------------------------------------------------------------------------
 
 class CurriculumController:
-    def __init__(self, data_sources: list[str], temperature: float = 0.5):
+    def __init__(
+        self,
+        data_sources: list[str],
+        source_counts: dict[str, int],
+        temperature: float = 0.5,
+        saturation_threshold: float = 0.75,
+        multi_table_success_threshold: float = 0.8,
+        min_weight: float = 0.1,
+    ):
         self.data_sources = sorted(set(data_sources))
         self.temperature = temperature
-        self.estimators: dict[str, LearnabilityEstimator] = {
-            s: LearnabilityEstimator() for s in self.data_sources
-        }
+        self.saturation_threshold = saturation_threshold
+        self.min_weight = min_weight  # minimum weight for any source
+
+        self.trackers: dict[str, SourceTracker] = {}
+        for s in self.data_sources:
+            threshold = multi_table_success_threshold if "multi" in s else 1.0
+            self.trackers[s] = SourceTracker(
+                success_threshold=threshold,
+                window_size=128,
+                recent_outcomes=deque(maxlen=128),
+            )
+
+        # Initial weights proportional to data counts
+        total = sum(source_counts.get(s, 1) for s in self.data_sources)
+        self._initial_weights = {s: source_counts.get(s, 1) / total for s in self.data_sources}
 
     def compute_sampling_weights(self) -> dict[str, float]:
-        total_samples = max(1, sum(e.n_samples for e in self.estimators.values()))
-        scores = []
+        total_samples = max(1, sum(t.n_samples for t in self.trackers.values()))
+
+        # Check if we have enough data to compute meaningful signals
+        min_samples = 32  # need at least this many samples per source
+        has_enough_data = all(t.n_samples >= min_samples for t in self.trackers.values())
+
+        if not has_enough_data:
+            # Early phase: use data-proportional weights
+            return dict(self._initial_weights)
+
+        scores = {}
         for source in self.data_sources:
-            est = self.estimators[source]
-            exploration = np.sqrt(2 * np.log(total_samples + 1) / (est.n_samples + 1))
-            scores.append(est.mu + exploration)
-        scores = np.array(scores, dtype=np.float64)
+            tracker = self.trackers[source]
+
+            # Exploitation: improvement velocity (how fast is this source improving?)
+            velocity = max(0.0, tracker.improvement_velocity)
+
+            # Exploration: UCB bonus for under-sampled sources
+            exploration = np.sqrt(2 * np.log(total_samples + 1) / (tracker.n_samples + 1))
+
+            # Room for improvement: 1 - success_rate (higher = more room)
+            room = 1.0 - tracker.success_rate
+
+            # Combined score: prioritize sources that are (a) improving fast AND
+            # (b) still have room to improve. Exploration ensures we don't ignore any source.
+            scores[source] = (velocity + 0.1) * room + exploration
+
+            # Saturation dampening: if success rate is very high, reduce weight
+            if tracker.success_rate >= self.saturation_threshold:
+                scores[source] *= 0.3  # strong dampening
+
         # Softmax with temperature
-        scores -= scores.max()
-        exp_scores = np.exp(scores / self.temperature)
+        source_list = self.data_sources
+        score_arr = np.array([scores[s] for s in source_list], dtype=np.float64)
+        score_arr -= score_arr.max()
+        exp_scores = np.exp(score_arr / self.temperature)
         weights = exp_scores / exp_scores.sum()
-        return {s: float(w) for s, w in zip(self.data_sources, weights)}
+
+        result = {}
+        for s, w in zip(source_list, weights):
+            # Enforce minimum weight so no source is completely starved
+            result[s] = max(float(w), self.min_weight)
+
+        # Re-normalize after applying min_weight
+        w_sum = sum(result.values())
+        result = {s: v / w_sum for s, v in result.items()}
+        return result
 
 
 # ---------------------------------------------------------------------------
-# Sampler implementing verl's AbstractCurriculumSampler
+# Sampler
 # ---------------------------------------------------------------------------
 
 class FinQACurriculumSampler(AbstractCurriculumSampler):
     """
-    Curriculum sampler for FinQA that dynamically adjusts sampling weights
-    across data sources (single_table, multi_table, etc.) based on training
-    performance signals.
+    Curriculum sampler for FinQA with scene-specific adaptations:
 
-    Required config:
-        data.sampler.class_path = "projects.finqa.finqa_curriculum_sampler"
-        data.sampler.class_name = "FinQACurriculumSampler"
-        data.dataloader_num_workers = 0
+    1. Initial weights proportional to data counts (not uniform)
+    2. Exploitation signal = reward improvement velocity (not |advantage|)
+    3. Multi-table rewards binarized at threshold 0.6 for success rate tracking
+    4. Saturation detection: sources with success_rate > 0.85 get dampened
+    5. Minimum weight floor prevents any source from being starved
     """
 
     def __init__(self, data_source: "Sized", data_config: DictConfig):
@@ -122,7 +204,6 @@ class FinQACurriculumSampler(AbstractCurriculumSampler):
             item = data_source[i]
             source = "unknown"
             if isinstance(item, dict):
-                # data_source may be at top level or nested in extra_info
                 source = item.get("data_source", None)
                 if source is None and isinstance(item.get("extra_info"), dict):
                     source = item["extra_info"].get("data_source", "unknown")
@@ -134,61 +215,56 @@ class FinQACurriculumSampler(AbstractCurriculumSampler):
         logger.info(f"[FinQACurriculumSampler] data_source counts: {counts}")
         print(f"[FinQACurriculumSampler] data_source counts: {counts}")
 
-        self.controller = CurriculumController(data_sources=sources)
-        # Initialize weights uniformly
-        self._weights = {s: 1.0 / len(sources) for s in sources}
+        self.controller = CurriculumController(
+            data_sources=sources,
+            source_counts=counts,
+        )
+        # Initial weights proportional to data counts
+        self._weights = dict(self.controller._initial_weights)
 
     # ---- AbstractCurriculumSampler interface ----
 
     def update(self, batch: DataProto) -> None:
-        """Called by the trainer after each training step with the processed batch."""
+        """Called after each training step with the processed batch."""
         data_sources = batch.non_tensor_batch.get("data_source", None)
         if data_sources is None:
             return
 
-        # Collect rewards and advantages per source
-        source_rewards: dict[str, list[float]] = defaultdict(list)
-        source_advantages: dict[str, list[float]] = defaultdict(list)
-
         rewards = batch.batch.get("token_level_rewards", None)
-        advantages = batch.batch.get("advantages", None)
-        if rewards is None or advantages is None:
+        if rewards is None:
             return
-
         response_mask = batch.batch.get("response_mask", None)
 
+        # Collect per-sample total reward grouped by source
+        source_rewards: dict[str, list[float]] = defaultdict(list)
         for i, source in enumerate(data_sources):
             source = str(source)
-            sample_reward = float(rewards[i].sum().item())
             if response_mask is not None:
-                mask = response_mask[i].bool()
-                adv_vals = advantages[i][mask]
-                sample_adv = float(adv_vals.mean().item()) if adv_vals.numel() > 0 else 0.0
+                sample_reward = float((rewards[i] * response_mask[i]).sum().item())
             else:
-                sample_adv = float(advantages[i].mean().item())
+                sample_reward = float(rewards[i].sum().item())
             source_rewards[source].append(sample_reward)
-            source_advantages[source].append(sample_adv)
 
-        # Update estimators
-        for source in source_rewards:
-            if source in self.controller.estimators:
-                self.controller.estimators[source].update(
-                    np.array(source_rewards[source]),
-                    np.array(source_advantages[source]),
-                )
+        # Update trackers
+        for source, reward_list in source_rewards.items():
+            if source in self.controller.trackers:
+                self.controller.trackers[source].update(np.array(reward_list))
 
         # Recompute weights
         self._weights = self.controller.compute_sampling_weights()
 
-        # Log current weights
+        # Log
         stats = []
         for s in self.controller.data_sources:
-            est = self.controller.estimators[s]
+            t = self.controller.trackers[s]
             w = self._weights.get(s, 0)
-            rate = est.alpha / (est.alpha + est.beta_param)
-            stats.append(f"{s}: w={w:.3f} rate={rate:.3f} adv={est.mu:.4f} n={est.n_samples}")
-        logger.info(f"[Curriculum] weights updated: {'; '.join(stats)}")
-        print(f"[Curriculum] weights updated: {'; '.join(stats)}")
+            stats.append(
+                f"{s}: w={w:.3f} rate={t.success_rate:.3f} "
+                f"vel={t.improvement_velocity:+.4f} n={t.n_samples}"
+            )
+        msg = f"[Curriculum] {'; '.join(stats)}"
+        logger.info(msg)
+        print(msg)
 
     # ---- Sampler interface ----
 
@@ -196,10 +272,8 @@ class FinQACurriculumSampler(AbstractCurriculumSampler):
         sources = list(self._weights.keys())
         weights = [self._weights[s] for s in sources]
 
-        # Filter to sources with actual indices
         valid = [(s, w) for s, w in zip(sources, weights) if self.source_indices.get(s)]
         if not valid:
-            # Fallback: yield all indices shuffled
             all_indices = list(range(len(self.dataset)))
             self.rng.shuffle(all_indices)
             yield from all_indices

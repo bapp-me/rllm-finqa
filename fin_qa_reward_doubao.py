@@ -114,7 +114,7 @@ def _call_judge(
     ]
 
     # reasoning effort: minimal for single-table, high for multi-table
-    reasoning_effort = "high" if is_multi_table else "minimal"
+    reasoning_effort = "low" if is_multi_table else "minimal"
 
     request_kwargs = {
         "model": JUDGE_MODEL,

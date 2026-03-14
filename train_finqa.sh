@@ -8,19 +8,19 @@ export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
-CKPT_DIR=${CKPT_DIR:-/home/qinhengyi/rllm/checkpoints/finqa-grpo-curriculum/finqa-grpo-exp}
+CKPT_DIR=${CKPT_DIR:-/home/qinhengyi/rllm/checkpoints/finqa-grpo-curriculum/finqa-grpo-incur}
 
 # Prepare data once (all difficulty levels included)
-python3 -m projects.finqa.prepare_finqa_data
+# python3 -m projects.finqa.prepare_finqa_data
 
 python3 -m projects.finqa.train_finqa \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=384 \
     data.val_batch_size=648 \
-    data.max_prompt_length=3072 \
+    data.max_prompt_length=4096 \
     data.max_response_length=16384 \
     data.dataloader_num_workers=0 \
-    data.sampler.class_path=projects.finqa.finqa_curriculum_sampler \
+    data.sampler.class_path=pkg://projects.finqa.finqa_curriculum_sampler \
     data.sampler.class_name=FinQACurriculumSampler \
     actor_rollout_ref.model.path=/home/qinhengyi/rllm/projects/finqa/qwen \
     actor_rollout_ref.hybrid_engine=True \
@@ -61,16 +61,16 @@ python3 -m projects.finqa.train_finqa \
     trainer.critic_warmup=0 \
     trainer.logger=['console','swanlab'] \
     trainer.project_name='finqa-grpo-curriculum' \
-    trainer.experiment_name='finqa-grpo-exp2' \
+    trainer.experiment_name='finqa-grpo-testu' \
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
-    trainer.test_freq=11 \
+    trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=$CKPT_DIR \
     trainer.resume_mode=disable \
     rllm.agent.max_steps=20 \
     rllm.stepwise_advantage.enable=False \
-    rllm.workflow.n_parallel_tasks=2304 \
+    rllm.workflow.n_parallel_tasks=1536 \
     trainer.total_epochs=5
