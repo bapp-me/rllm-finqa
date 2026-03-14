@@ -1,6 +1,7 @@
 # Standard imports
 import json
 import re
+import time
 
 import httpx
 import openai
@@ -123,7 +124,18 @@ def _call_judge(
     }
 
     try:
-        response = JUDGE_CLIENT.responses.create(**request_kwargs)
+        last_exception = None
+        for attempt in range(3):
+            try:
+                response = JUDGE_CLIENT.responses.create(**request_kwargs)
+                break
+            except (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError, httpx.TimeoutException) as e:
+                last_exception = e
+                if attempt < 2:
+                    time.sleep(2 ** attempt + 1)  # 2s, 3s
+                    print(f"[finqa_reward] Retry {attempt + 1}/2 after {type(e).__name__}")
+                    continue
+                raise
 
         # Extract text from response output
         judge_output = ""

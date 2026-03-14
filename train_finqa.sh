@@ -61,7 +61,7 @@ python3 -m projects.finqa.train_finqa \
     trainer.critic_warmup=0 \
     trainer.logger=['console','swanlab'] \
     trainer.project_name='finqa-grpo-curriculum' \
-    trainer.experiment_name='finqa-grpo-testu' \
+    trainer.experiment_name='finqa-grpo-exp5-continue' \
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=8 \
     trainer.nnodes=1 \
@@ -69,7 +69,7 @@ python3 -m projects.finqa.train_finqa \
     trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
     trainer.default_local_dir=$CKPT_DIR \
-    trainer.resume_mode=disable \
+    trainer.resume_mode=auto \
     rllm.agent.max_steps=20 \
     rllm.stepwise_advantage.enable=False \
     rllm.workflow.n_parallel_tasks=1536 \
