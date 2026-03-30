@@ -54,12 +54,10 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 # Weight configuration for multi-table scoring
 CORRECTNESS_WEIGHTS = {
-    "primary_data_score": 0.30,  # core correctness
-    "derived_metrics_score": 0.30,  # core correctness
-    "reasoning_score": 0.15,
+    "primary_data_score": 0.40,  # core correctness
+    "derived_metrics_score": 0.40,  # core correctness
+    "reasoning_score": 0.10,
     "consistency_score": 0.10,
-    "completeness_score": 0.10,
-    "structure_score": 0.05,
 }
 
 
@@ -277,6 +275,21 @@ def fin_qa_reward_function(task_info: dict, action: str) -> RewardOutput:
         is_correct = bool(result)
         correctness_reward = 1.0 if is_correct else 0.0
 
+    # ----- Efficiency Penalty Calculation -----
+    # Count the number of '<tool_call>' tags in the action to represent the number of steps taken.
+    num_steps = action.count("<tool_call>")
+    step_penalty = num_steps * 0.01
+
+    if is_multi_table:
+        # For multi-table, apply penalty if the score is at least 0.85
+        if correctness_reward >= 0.85:
+            correctness_reward = max(0.0, correctness_reward - step_penalty)
+    else:
+        # For single-table, apply penalty if the score is at least 1.0
+        if correctness_reward >= 1.0:
+            correctness_reward = max(0.0, 1.0 - step_penalty)
+    # ------------------------------------------
+
     # Check table access
     accessed_tables = task_info.get("accessed_tables", [])
     expected_table_names = task_info.get("table_name", "")
@@ -302,6 +315,8 @@ def fin_qa_reward_function(task_info: dict, action: str) -> RewardOutput:
             for k in ("judge_client_unavailable", "judge_timeout_error", "judge_api_error", "judge_parse_error")
         )
         else 0.0,
+        "num_tool_calls": float(num_steps),
+        "step_penalty_applied": float(step_penalty) if ((is_multi_table and is_correct) or (not is_multi_table and correctness_reward > 0.0)) else 0.0,
     }
 
     if is_multi_table:

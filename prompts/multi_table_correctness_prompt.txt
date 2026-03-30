@@ -11,6 +11,11 @@ The task involves filling out a strict template with specific financial data poi
 ### YOUR GOAL
 Output a JSON object containing scores (0-5 integer) and a brief explanation. You must apply strict "Step Marking" logic—rewarding correct methodology even if specific numbers differ slightly due to rounding.
 
+### NEGATIVE SAMPLES EXCEPTION (CRITICAL)
+If the **LABEL (GROUND TRUTH)** is exactly `[DATA_UNAVAILABLE]`, do NOT grade using standard step marking. Instead:
+- If the **MODEL RESPONSE** contains `[DATA_UNAVAILABLE]` directly, OR if it explicitly states in its summary/text that the specific data is missing or unavailable, you MUST score **5** for all four dimensions (Primary Data, Derived Metrics, Reasoning, Consistency). This ensures the model receives a 1.0 binary reward for correctly identifying negative samples.
+- If the model hallucinated an answer and completely failed to mention that the data was unavailable, you MUST score **0** for all four dimensions.
+
 ---
 
 ### SCORING DIMENSIONS & RUBRIC
@@ -40,25 +45,7 @@ Output a JSON object containing scores (0-5 integer) and a brief explanation. Yo
 - **1:** Mostly incorrect calculations.
 - **0:** No correct calculations, blank, or nonsensical.
 
-#### 3. Completeness (0-5)
-**Definition:** Did the model fill in EVERY placeholder (`?`, `$?M`, `?%`) in the template?
-- **5:** Every single placeholder is filled (100%).
-- **4:** Most placeholders filled (75-95%), minor gaps.
-- **3:** Roughly half filled, several sections incomplete.
-- **2:** Less than half filled, major sections missing.
-- **1:** Very few placeholders filled (<25%).
-- **0:** Model refused to answer, blank response, or nearly nothing filled.
-
-#### 4. Structure & Formatting (0-5)
-**Definition:** Adherence to the required template structure (Headings, Bullet points, Bold text, ordering).
-- **5:** Perfect match to the template schema.
-- **4:** Minor deviations (slightly different heading wording, but structure matches).
-- **3:** Some structural changes (merged sections, reordered parts).
-- **2:** Significant deviations; some sections present but poorly organized.
-- **1:** Poor structure; ignores most template format.
-- **0:** Minimal structure or mostly prose; ignores template entirely.
-
-#### 5. Qualitative Reasoning (0-5)
+#### 3. Qualitative Reasoning (0-5)
 **Definition:** The quality of the text *justifying* the numbers (the "Why").
 - **Evaluation:** Does the narrative make sense given the numbers *the model found*?
 - *Example:* If the model calculated a Deficit (even if wrongly), does the text correctly discuss "underfunding risks"? If the text says "Strong Surplus" but the number shows a deficit, score this low.
@@ -69,7 +56,7 @@ Output a JSON object containing scores (0-5 integer) and a brief explanation. Yo
 - **1:** Contradictory or largely nonsensical reasoning.
 - **0:** No reasoning provided or completely wrong.
 
-#### 6. Internal Consistency (0-5)
+#### 4. Internal Consistency (0-5)
 **Definition:** Does the response contradict itself? (Separate from Label correctness—score internal logic only).
 - **Check:** Does "Total Assets" in Section 1 match "Total Assets" in Section 3? Do totals add up?
 - **Check:** If Section 1 says "Funding improved," does Section 6 Conclusion also say "Funding improved"?
@@ -100,9 +87,6 @@ Return valid JSON only. No markdown formatting outside the JSON.
 {
   "primary_data_score": <0-5 integer>,
   "derived_metrics_score": <0-5 integer>,
-  "completeness_score": <0-5 integer>,
-  "structure_score": <0-5 integer>,
   "reasoning_score": <0-5 integer>,
-  "consistency_score": <0-5 integer>,
-  "explanation": "Concise justification (2-4 sentences)."
+  "consistency_score": <0-5 integer>
 }

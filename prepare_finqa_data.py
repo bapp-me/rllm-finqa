@@ -99,6 +99,27 @@ def _parse_json_list(value):
     return []
 
 
+def _build_negative_split(single_neg_df: pd.DataFrame, multi_neg_df: pd.DataFrame) -> pd.DataFrame:
+    """Build negative sample split with distinct data_source and curriculum_stage."""
+    parts = []
+
+    if not single_neg_df.empty:
+        single = single_neg_df.copy()
+        single["data_source"] = "negative_single_table"
+        single["curriculum_stage"] = "negative_single_table"
+        parts.append(single)
+
+    if not multi_neg_df.empty:
+        multi = multi_neg_df.copy()
+        multi["data_source"] = "negative_multi_table"
+        multi["curriculum_stage"] = "negative_multi_table"
+        parts.append(multi)
+
+    if not parts:
+        return pd.DataFrame()
+    return pd.concat(parts, axis=0, ignore_index=True)
+
+
 def prepare_finqa_data():
     single_train_df = _load_csv(C.TRAIN_QUESTIONS_PATH)
     single_val_df = _load_csv(C.VAL_QUESTIONS_PATH)
@@ -112,9 +133,22 @@ def prepare_finqa_data():
     val_df = _build_curriculum_split(single_val_df, multi_val_df)
     test_df = _build_curriculum_split(single_test_df, multi_test_df)
 
+    # Load and append negative samples (train only)
+    neg_single_df = _load_csv(C.NEGATIVE_SINGLE_TABLE_TRAIN_PATH) if C.NEGATIVE_SINGLE_TABLE_TRAIN_PATH.exists() else pd.DataFrame()
+    neg_multi_df = _load_csv(C.NEGATIVE_MULTI_TABLE_TRAIN_PATH) if C.NEGATIVE_MULTI_TABLE_TRAIN_PATH.exists() else pd.DataFrame()
+    neg_df = _build_negative_split(neg_single_df, neg_multi_df)
+
+    neg_single_count = len(neg_single_df) if not neg_single_df.empty else 0
+    neg_multi_count = len(neg_multi_df) if not neg_multi_df.empty else 0
+    positive_train_count = len(train_df)
+
+    if not neg_df.empty:
+        train_df = pd.concat([train_df, neg_df], axis=0, ignore_index=True)
+
     print(
         "Curriculum split sizes (single -> medium -> hard): "
-        f"train={len(train_df)}, val={len(val_df)}, test={len(test_df)}"
+        f"train={positive_train_count} positive + {neg_single_count} neg_single + {neg_multi_count} neg_multi = {len(train_df)}, "
+        f"val={len(val_df)}, test={len(test_df)}"
     )
 
     def preprocess_fn(example):

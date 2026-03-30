@@ -20,6 +20,12 @@ MULTI_TABLE_TRAIN_PATH = MULTI_TABLE_DATA_DIR / "train_finqa.csv"
 MULTI_TABLE_VAL_PATH = MULTI_TABLE_DATA_DIR / "val_finqa.csv"
 MULTI_TABLE_TEST_PATH = MULTI_TABLE_DATA_DIR / "test_finqa.csv"
 
+# Negative sample paths
+NEGATIVE_SINGLE_TABLE_TRAIN_PATH = DATA_DIR / "train_finqa_negative.csv"
+NEGATIVE_MULTI_TABLE_TRAIN_PATH = MULTI_TABLE_DATA_DIR / "train_finqa_negative.csv"
+NEGATIVE_SINGLE_TABLE_TEST_PATH = DATA_DIR / "test_finqa_negative.csv"
+NEGATIVE_MULTI_TABLE_TEST_PATH = MULTI_TABLE_DATA_DIR / "test_finqa_negative.csv"
+
 # Prompt paths
 REACT_SYSTEM_PROMPT_PATH = PROMPTS_DIR / "react_system_prompt.txt"
 CORRECTNESS_PROMPT_PATH = PROMPTS_DIR / "correctness_prompt.txt"

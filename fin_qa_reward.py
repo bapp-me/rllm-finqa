@@ -54,12 +54,10 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 # Weight configuration for multi-table scoring
 CORRECTNESS_WEIGHTS = {
-    "primary_data_score": 0.30,  # core correctness
-    "derived_metrics_score": 0.30,  # core correctness
-    "reasoning_score": 0.15,
+    "primary_data_score": 0.40,  # core correctness
+    "derived_metrics_score": 0.40,  # core correctness
+    "reasoning_score": 0.10,
     "consistency_score": 0.10,
-    "completeness_score": 0.10,
-    "structure_score": 0.05,
 }
 
 

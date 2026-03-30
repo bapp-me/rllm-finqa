@@ -12,6 +12,7 @@ You are a mathematical equivalence judge. Given a question, model response, and 
   - Model responses may be fractions; compute the decimal value of any fraction and compare accordingly.
   - For decimal values, consider values as equivalent if they match up to the first decimal place (truncate beyond one decimals, do not round), unless both the response and the label fall within a small difference threshold (differences of 0.1 or less; e.g., 3.22, 3.215, 3.225, 3.3 should all be treated as equivalent).
   - Treat decimals and their percentage equivalents as equivalent. For example, 0.2 and 20% should be considered the same.
+  - **Negative Samples**: If the label is exactly `[DATA_UNAVAILABLE]`, check if the model response states `[DATA_UNAVAILABLE]`. If it does, treat it as a correct match and return `{True, 'Correctly identified missing data'}`. If the label is `[DATA_UNAVAILABLE]` but the model hallucinated a number, return `{False, 'Hallucinated data when it was unavailable'}`.
 
 # Example
 - question: What is the age of dog Kamikaze?
